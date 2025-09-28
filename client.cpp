@@ -12,6 +12,8 @@
 */
 #include "common.h"
 #include "FIFORequestChannel.h"
+#include <sys/wait.h>  // for wait()
+
 
 using namespace std;
 
@@ -21,8 +23,8 @@ int main (int argc, char *argv[]) {
 	int p = 1;
     double t = 0.0;
     int e = 1;
-	int mval = 256;
-	
+	int mval = 256;  // default value for -m
+
 	string filename = "";
 	while ((opt = getopt(argc, argv, "p:t:e:f:m:")) != -1) {
 		switch (opt) {
@@ -39,7 +41,7 @@ int main (int argc, char *argv[]) {
 				filename = optarg;
 				break;
 			case 'm':
-				m = atoi(optarg);
+				mval = atoi(optarg);
 				break;
 		}
 	}
@@ -51,26 +53,48 @@ int main (int argc, char *argv[]) {
 	char m_str[16];
 	sprintf(m_str, "%d", mval);  // converts 256 -> "256"
 
-	char* server_args[] = {
-		(char*) "./server",
-		(char*) "-m",
-		m_str,
-		NULL
-	};
-	pid_t pid = fork();
+	char* server_args[] = {(char*) "./server", (char*) "-m", m_str, nullptr};
 
-	if (pid < 0){
+	pid_t pid = fork();
+	if (pid == -1){
 		cerr << "fork failed\n";
 		return 1;
 	}
 	if (pid == 0){ //child process
 		execvp(server_args[0], server_args);
 		cerr << "execvp failed\n";
-		return 1;
+		return 0;
+	} else{
+		sleep(1);
 	}
 
     FIFORequestChannel chan("control", FIFORequestChannel::CLIENT_SIDE);
+	
+	ofstream out("x1.csv");
 
+	for (int i = 0; i < 1000; ++i) {
+		t = i * 0.004;
+		for (int ecg = 1; ecg <= 2; ++ecg) {
+			datamsg msg(p, t, ecg);
+			char buf[MAX_MESSAGE];
+			memcpy(buf, &msg, sizeof(datamsg));
+			chan.cwrite(buf, sizeof(datamsg));
+
+			double reply;
+			chan.cread(&reply, sizeof(double));
+
+			cout << "Requesting point " << i << " ECG" << ecg << endl;
+			out << reply;
+			if (ecg == 1) out << ",";
+			else out << "\n";
+		}
+	}
+
+	out.close();
+
+
+
+	/* 
 	// example data point request
     char buf[MAX_MESSAGE]; // 256
     datamsg x(p, t, e); //change from hard coding to user's values
@@ -80,7 +104,8 @@ int main (int argc, char *argv[]) {
 	double reply;
 	chan.cread(&reply, sizeof(double)); //answer
 	cout << "For person " << p << ", at time " << t << ", the value of ecg " << e << " is " << reply << endl;
-	
+	*/
+
     // sending a non-sense message, you need to change this
 	filemsg fm(0, 0);
 	string fname = "teslkansdlkjflasjdf.dat";
