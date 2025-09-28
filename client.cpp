@@ -78,88 +78,87 @@ int main (int argc, char *argv[]) {
 
 	FIFORequestChannel new_chan(new_channel_name, FIFORequestChannel::CLIENT_SIDE);
 
+	if (!filename.empty()){
+		// sending a non-sense message, you need to change this
+		filemsg fm(0, 0);
+		string fname = filename;
 
-	ofstream out("x1.csv");
+		int len = sizeof(filemsg) + (fname.size() + 1);
+		char* buf2 = new char[len];
+		memcpy(buf2, &fm, sizeof(filemsg));
+		strcpy(buf2 + sizeof(filemsg), fname.c_str());
+		new_chan.cwrite(buf2, len);  // I want the file length;
 
-	for (int i = 0; i < 1000; ++i) {
-		t = i * 0.004;
-		for (int ecg = 1; ecg <= 2; ++ecg) {
-			datamsg msg(p, t, ecg);
-			char buf[MAX_MESSAGE];
-			memcpy(buf, &msg, sizeof(datamsg));
-			new_chan.cwrite(buf, sizeof(datamsg));
+		__int64_t file_length;
+		new_chan.cread(&file_length, sizeof(__int64_t));
+		cout << "File length: " << file_length << " bytes" << endl;
 
-			double reply;
-			new_chan.cread(&reply, sizeof(double));
+		delete[] buf2;
 
-			//cout << "Requesting point " << i << " ECG" << ecg << endl;
-			out << reply;
-			if (ecg == 1) out << ",";
-			else out << "\n";
+			ofstream fout("received/" + filename, ios::binary);
+
+		// Step 3: Request the file in chunks
+		__int64_t offset = 0;
+		int buffer_size = MAX_MESSAGE - sizeof(filemsg); // max data per message
+
+		while (offset < file_length) {
+			int chunk_size = min(buffer_size, (int)(file_length - offset));
+			filemsg fm_chunk(offset, chunk_size);
+			int len = sizeof(filemsg) + filename.size() + 1;
+			char* buf_chunk = new char[len];
+			memcpy(buf_chunk, &fm_chunk, sizeof(filemsg));
+			strcpy(buf_chunk + sizeof(filemsg), filename.c_str());
+
+			new_chan.cwrite(buf_chunk, len);
+			delete[] buf_chunk;
+
+			// read the chunk from server
+			char* data = new char[chunk_size];
+			new_chan.cread(data, chunk_size);
+			fout.write(data, chunk_size);
+			delete[] data;
+
+			offset += chunk_size;
 		}
+
+		fout.close();
+		cout << "File received successfully: received/" << filename << endl;
+
+
+	}else if (t > 0.0){
+		//single point
+		// example data point request
+		char buf[MAX_MESSAGE]; // 256
+		datamsg x(p, t, e); //change from hard coding to user's values
+		
+		memcpy(buf, &x, sizeof(datamsg));
+		new_chan.cwrite(buf, sizeof(datamsg)); // question
+		double reply;
+		new_chan.cread(&reply, sizeof(double)); //answer
+		cout << "For person " << p << ", at time " << t << ", the value of ecg " << e << " is " << reply << endl;
+	}else if(!filename.size() && t == 0.0 && p > 0){
+		ofstream out("x1.csv");
+
+		for (int i = 0; i < 1000; ++i) {
+			t = i * 0.004;
+			for (int ecg = 1; ecg <= 2; ++ecg) {
+				datamsg msg(p, t, ecg);
+				char buf[MAX_MESSAGE];
+				memcpy(buf, &msg, sizeof(datamsg));
+				new_chan.cwrite(buf, sizeof(datamsg));
+
+				double reply;
+				new_chan.cread(&reply, sizeof(double));
+
+				//cout << "Requesting point " << i << " ECG" << ecg << endl;
+				out << reply;
+				if (ecg == 1) out << ",";
+				else out << "\n";
+			}
+		}
+
+		out.close();
 	}
-
-	out.close();
-
-
-
-	
-	// example data point request
-    char buf[MAX_MESSAGE]; // 256
-    datamsg x(p, t, e); //change from hard coding to user's values
-	
-	memcpy(buf, &x, sizeof(datamsg));
-	new_chan.cwrite(buf, sizeof(datamsg)); // question
-	double reply;
-	new_chan.cread(&reply, sizeof(double)); //answer
-	cout << "For person " << p << ", at time " << t << ", the value of ecg " << e << " is " << reply << endl;
-	
-
-    // sending a non-sense message, you need to change this
-	filemsg fm(0, 0);
-	string fname = filename;
-	
-	int len = sizeof(filemsg) + (fname.size() + 1);
-	char* buf2 = new char[len];
-	memcpy(buf2, &fm, sizeof(filemsg));
-	strcpy(buf2 + sizeof(filemsg), fname.c_str());
-	new_chan.cwrite(buf2, len);  // I want the file length;
-
-	__int64_t file_length;
-    new_chan.cread(&file_length, sizeof(__int64_t));
-    cout << "File length: " << file_length << " bytes" << endl;
-
-	delete[] buf2;
-	
-	 ofstream fout("received/" + filename, ios::binary);
-
-    // Step 3: Request the file in chunks
-    __int64_t offset = 0;
-    int buffer_size = MAX_MESSAGE - sizeof(filemsg); // max data per message
-
-    while (offset < file_length) {
-        int chunk_size = min(buffer_size, (int)(file_length - offset));
-        filemsg fm_chunk(offset, chunk_size);
-        int len = sizeof(filemsg) + filename.size() + 1;
-        char* buf_chunk = new char[len];
-        memcpy(buf_chunk, &fm_chunk, sizeof(filemsg));
-        strcpy(buf_chunk + sizeof(filemsg), filename.c_str());
-
-        new_chan.cwrite(buf_chunk, len);
-        delete[] buf_chunk;
-
-        // read the chunk from server
-        char* data = new char[chunk_size];
-        new_chan.cread(data, chunk_size);
-        fout.write(data, chunk_size);
-        delete[] data;
-
-        offset += chunk_size;
-    }
-
-    fout.close();
-    cout << "File received successfully: received/" << filename << endl;
-
 
 	// closing the channel    
     MESSAGE_TYPE m = QUIT_MSG;
