@@ -67,9 +67,18 @@ int main (int argc, char *argv[]) {
 	} else{
 		sleep(1);
 	}
-
+	//new channel
     FIFORequestChannel chan("control", FIFORequestChannel::CLIENT_SIDE);
 	
+	MESSAGE_TYPE new_channel_request = NEWCHANNEL_MSG;
+	chan.cwrite(&new_channel_request, sizeof(MESSAGE_TYPE));
+
+	char new_channel_name[100];
+	chan.cread(new_channel_name, sizeof(new_channel_name));
+
+	FIFORequestChannel new_chan(new_channel_name, FIFORequestChannel::CLIENT_SIDE);
+
+
 	ofstream out("x1.csv");
 
 	for (int i = 0; i < 1000; ++i) {
@@ -78,10 +87,10 @@ int main (int argc, char *argv[]) {
 			datamsg msg(p, t, ecg);
 			char buf[MAX_MESSAGE];
 			memcpy(buf, &msg, sizeof(datamsg));
-			chan.cwrite(buf, sizeof(datamsg));
+			new_chan.cwrite(buf, sizeof(datamsg));
 
 			double reply;
-			chan.cread(&reply, sizeof(double));
+			new_chan.cread(&reply, sizeof(double));
 
 			//cout << "Requesting point " << i << " ECG" << ecg << endl;
 			out << reply;
@@ -94,17 +103,17 @@ int main (int argc, char *argv[]) {
 
 
 
-	/* 
+	
 	// example data point request
     char buf[MAX_MESSAGE]; // 256
     datamsg x(p, t, e); //change from hard coding to user's values
 	
 	memcpy(buf, &x, sizeof(datamsg));
-	chan.cwrite(buf, sizeof(datamsg)); // question
+	new_chan.cwrite(buf, sizeof(datamsg)); // question
 	double reply;
-	chan.cread(&reply, sizeof(double)); //answer
+	new_chan.cread(&reply, sizeof(double)); //answer
 	cout << "For person " << p << ", at time " << t << ", the value of ecg " << e << " is " << reply << endl;
-	*/
+	
 
     // sending a non-sense message, you need to change this
 	filemsg fm(0, 0);
@@ -114,10 +123,10 @@ int main (int argc, char *argv[]) {
 	char* buf2 = new char[len];
 	memcpy(buf2, &fm, sizeof(filemsg));
 	strcpy(buf2 + sizeof(filemsg), fname.c_str());
-	chan.cwrite(buf2, len);  // I want the file length;
+	new_chan.cwrite(buf2, len);  // I want the file length;
 
 	__int64_t file_length;
-    chan.cread(&file_length, sizeof(__int64_t));
+    new_chan.cread(&file_length, sizeof(__int64_t));
     cout << "File length: " << file_length << " bytes" << endl;
 
 	delete[] buf2;
@@ -136,12 +145,12 @@ int main (int argc, char *argv[]) {
         memcpy(buf_chunk, &fm_chunk, sizeof(filemsg));
         strcpy(buf_chunk + sizeof(filemsg), filename.c_str());
 
-        chan.cwrite(buf_chunk, len);
+        new_chan.cwrite(buf_chunk, len);
         delete[] buf_chunk;
 
         // read the chunk from server
         char* data = new char[chunk_size];
-        chan.cread(data, chunk_size);
+        new_chan.cread(data, chunk_size);
         fout.write(data, chunk_size);
         delete[] data;
 
@@ -153,7 +162,8 @@ int main (int argc, char *argv[]) {
 
 
 	// closing the channel    
-     MESSAGE_TYPE m = QUIT_MSG;
+    MESSAGE_TYPE m = QUIT_MSG;
+	new_chan.cwrite(&m, sizeof(MESSAGE_TYPE));
     chan.cwrite(&m, sizeof(MESSAGE_TYPE));
 
 	int status;
