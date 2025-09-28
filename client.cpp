@@ -24,8 +24,9 @@ int main (int argc, char *argv[]) {
     double t = 0.0;
     int e = 1;
 	int mval = 256;  // default value for -m
-
 	string filename = "";
+    bool use_new_chan = false;
+
 	while ((opt = getopt(argc, argv, "p:t:e:f:m:")) != -1) {
 		switch (opt) {
 			case 'p':
@@ -43,6 +44,9 @@ int main (int argc, char *argv[]) {
 			case 'm':
 				mval = atoi(optarg);
 				break;
+			case 'c':
+				use_new_chan = true;
+				break;		
 		}
 	}
 	//give arguments for the server
@@ -69,15 +73,20 @@ int main (int argc, char *argv[]) {
 	}
 	//new channel
     FIFORequestChannel chan("control", FIFORequestChannel::CLIENT_SIDE);
+
+	FIFORequestChannel* active_chan = &chan;
+    FIFORequestChannel* extra_chan = nullptr;
 	
-	MESSAGE_TYPE new_channel_request = NEWCHANNEL_MSG;
-	chan.cwrite(&new_channel_request, sizeof(MESSAGE_TYPE));
+	if( use_new_chan){
+		MESSAGE_TYPE new_channel_request = NEWCHANNEL_MSG;
+		chan.cwrite(&new_channel_request, sizeof(MESSAGE_TYPE));
 
-	char new_channel_name[100];
-	chan.cread(new_channel_name, sizeof(new_channel_name));
+		char new_channel_name[100];
+		chan.cread(new_channel_name, sizeof(new_channel_name));
 
-	FIFORequestChannel new_chan(new_channel_name, FIFORequestChannel::CLIENT_SIDE);
-
+		extra_chan = new FIFORequestChannel (new_channel_name, FIFORequestChannel::CLIENT_SIDE);
+		active_chan = extra_chan;
+	}	
 	if (!filename.empty()){
 		// sending a non-sense message, you need to change this
 		filemsg fm(0, 0);
@@ -85,12 +94,11 @@ int main (int argc, char *argv[]) {
 		char* buf2 = new char[len];
 		memcpy(buf2, &fm, sizeof(filemsg));
 		strcpy(buf2 + sizeof(filemsg), filename.c_str());
-		new_chan.cwrite(buf2, len);  // I want the file length;
+		active_chan->cwrite(buf2, len);  // I want the file length;
 
 		__int64_t file_length;
-		new_chan.cread(&file_length, sizeof(__int64_t));
+		active_chan->cread(&file_length, sizeof(__int64_t));
 		cout << "File length: " << file_length << " bytes" << endl;
-
 		delete[] buf2;
 
 		ofstream fout("received/" + filename, ios::binary);
@@ -99,8 +107,6 @@ int main (int argc, char *argv[]) {
 		__int64_t offset = 0;
 		int buffer_size = mval - sizeof(filemsg); // max data per message
 
-		char* buf_chunk = new char[sizeof(filemsg) + filename.size() + 1]; 
-		char* data = new char[mval];
 		while (offset < file_length) {
 			int chunk_size = min(buffer_size, (int)(file_length - offset));
 			filemsg fm_chunk(offset, chunk_size);
@@ -109,22 +115,19 @@ int main (int argc, char *argv[]) {
 			memcpy(buf_chunk, &fm_chunk, sizeof(filemsg));
 			strcpy(buf_chunk + sizeof(filemsg), filename.c_str());
 
-			new_chan.cwrite(buf_chunk, len);
+			active_chan->cwrite(buf_chunk, len);
 			delete[] buf_chunk;
 
 			// read the chunk from server
 			char* data = new char[chunk_size];
-			new_chan.cread(data, chunk_size);
+			 active_chan->cread(data, chunk_size);
 			fout.write(data, chunk_size);
 			delete[] data;
 
 			offset += chunk_size;
 		}
-		delete[] buf_chunk;
-		delete[] data;
 		fout.close();
 		cout << "File received successfully: received/" << filename << endl;
-
 
 	}else if (t > 0.0){
 		//single point
@@ -133,11 +136,11 @@ int main (int argc, char *argv[]) {
 		datamsg x(p, t, e); //change from hard coding to user's values
 		
 		memcpy(buf, &x, sizeof(datamsg));
-		new_chan.cwrite(buf, sizeof(datamsg)); // question
+		active_chan->cwrite(buf, sizeof(datamsg)); // question
 		double reply;
-		new_chan.cread(&reply, sizeof(double)); //answer
+		active_chan->cread(&reply, sizeof(double)); //answer
 		cout << "For person " << p << ", at time " << t << ", the value of ecg " << e << " is " << reply << endl;
-	}else if(!filename.size() && t == 0.0 && p > 0){
+	}else if(filename.size() && t == 0.0 && p > 0){
 		ofstream out("received/x1.csv");
 
 		for (int i = 0; i < 1000; ++i) {
@@ -146,10 +149,10 @@ int main (int argc, char *argv[]) {
 				datamsg msg(p, t, ecg);
 				char buf[mval];
 				memcpy(buf, &msg, sizeof(datamsg));
-				new_chan.cwrite(buf, sizeof(datamsg));
+				active_chan->cwrite(buf, sizeof(datamsg));
 
 				double reply;
-				new_chan.cread(&reply, sizeof(double));
+				active_chan->cread(&reply, sizeof(double));
 
 				//cout << "Requesting point " << i << " ECG" << ecg << endl;
 				out << reply;
@@ -163,7 +166,8 @@ int main (int argc, char *argv[]) {
 
 	// closing the channel    
     MESSAGE_TYPE m = QUIT_MSG;
-	new_chan.cwrite(&m, sizeof(MESSAGE_TYPE));
+	active_chan->cwrite(&m, sizeof(MESSAGE_TYPE));
+	if (extra_chan) delete extra_chan;
     chan.cwrite(&m, sizeof(MESSAGE_TYPE));
 
 	int status;
