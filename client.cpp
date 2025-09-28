@@ -81,12 +81,10 @@ int main (int argc, char *argv[]) {
 	if (!filename.empty()){
 		// sending a non-sense message, you need to change this
 		filemsg fm(0, 0);
-		string fname = filename;
-
-		int len = sizeof(filemsg) + (fname.size() + 1);
+		int len = sizeof(filemsg) + (filename.size() + 1);
 		char* buf2 = new char[len];
 		memcpy(buf2, &fm, sizeof(filemsg));
-		strcpy(buf2 + sizeof(filemsg), fname.c_str());
+		strcpy(buf2 + sizeof(filemsg), filename.c_str());
 		new_chan.cwrite(buf2, len);  // I want the file length;
 
 		__int64_t file_length;
@@ -95,12 +93,14 @@ int main (int argc, char *argv[]) {
 
 		delete[] buf2;
 
-			ofstream fout("received/" + filename, ios::binary);
+		ofstream fout("received/" + filename, ios::binary);
 
 		// Step 3: Request the file in chunks
 		__int64_t offset = 0;
-		int buffer_size = MAX_MESSAGE - sizeof(filemsg); // max data per message
+		int buffer_size = mval - sizeof(filemsg); // max data per message
 
+		char* buf_chunk = new char[sizeof(filemsg) + filename.size() + 1]; 
+		char* data = new char[mval];
 		while (offset < file_length) {
 			int chunk_size = min(buffer_size, (int)(file_length - offset));
 			filemsg fm_chunk(offset, chunk_size);
@@ -120,7 +120,8 @@ int main (int argc, char *argv[]) {
 
 			offset += chunk_size;
 		}
-
+		delete[] buf_chunk;
+		delete[] data;
 		fout.close();
 		cout << "File received successfully: received/" << filename << endl;
 
@@ -128,7 +129,7 @@ int main (int argc, char *argv[]) {
 	}else if (t > 0.0){
 		//single point
 		// example data point request
-		char buf[MAX_MESSAGE]; // 256
+		char buf[mval]; // 256
 		datamsg x(p, t, e); //change from hard coding to user's values
 		
 		memcpy(buf, &x, sizeof(datamsg));
@@ -137,13 +138,13 @@ int main (int argc, char *argv[]) {
 		new_chan.cread(&reply, sizeof(double)); //answer
 		cout << "For person " << p << ", at time " << t << ", the value of ecg " << e << " is " << reply << endl;
 	}else if(!filename.size() && t == 0.0 && p > 0){
-		ofstream out("x1.csv");
+		ofstream out("received/x1.csv");
 
 		for (int i = 0; i < 1000; ++i) {
 			t = i * 0.004;
 			for (int ecg = 1; ecg <= 2; ++ecg) {
 				datamsg msg(p, t, ecg);
-				char buf[MAX_MESSAGE];
+				char buf[mval];
 				memcpy(buf, &msg, sizeof(datamsg));
 				new_chan.cwrite(buf, sizeof(datamsg));
 
