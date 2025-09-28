@@ -24,10 +24,11 @@ int main (int argc, char *argv[]) {
     double t = -1;
     int e = -1;
 	int mval = MAX_MESSAGE;  // default value for -m
-    bool use_new_chan = false;
+    bool new_chan = false;
+	vector<FIFORequestChannel*> channels;
 
 	string filename = "";
-	while ((opt = getopt(argc, argv, "p:t:e:f:m:c:")) != -1) {
+	while ((opt = getopt(argc, argv, "p:t:e:f:m:c")) != -1) {
 		switch (opt) {
 			case 'p':
 				p = atoi (optarg);
@@ -45,8 +46,8 @@ int main (int argc, char *argv[]) {
 				mval = atoi(optarg);
 				break;
 			case 'c':
-				use_new_chan = true;
-				break;		
+				new_chan = true;
+				break;
 		}
 	}
 	//give arguments for the server
@@ -69,22 +70,24 @@ int main (int argc, char *argv[]) {
 		cerr << "execvp failed\n";
 		return 0;
 	}
+
 	//new channel
-    FIFORequestChannel chan("control", FIFORequestChannel::CLIENT_SIDE);
-
-	FIFORequestChannel* active_chan = &chan;
-    FIFORequestChannel* extra_chan = nullptr;
+    FIFORequestChannel cont_chan("control", FIFORequestChannel::CLIENT_SIDE);
+	channels.push_back(&cont_chan);
 	
-	if( use_new_chan){
-		MESSAGE_TYPE new_channel_request = NEWCHANNEL_MSG;
-		chan.cwrite(&new_channel_request, sizeof(MESSAGE_TYPE));
+	if(new_chan){
+		MESSAGE_TYPE nc = NEWCHANNEL_MSG; //1st step of creating nc
+		channels[0]->cwrite(&nc, sizeof(MESSAGE_TYPE));
 
-		char new_channel_name[100];
-		chan.cread(new_channel_name, sizeof(new_channel_name));
+		char nc_name[100]; //need to receive name of server, can use char* or string to hold name
+		channels[0]->cread(nc_name, sizeof(nc_name));//cread response from the server
+		//call the FIFORequestChannel constructor with the name from the server
 
-		extra_chan = new FIFORequestChannel (new_channel_name, FIFORequestChannel::CLIENT_SIDE);
-		active_chan = extra_chan;
+		FIFORequestChannel* new_chan_ptr = new FIFORequestChannel(nc_name, FIFORequestChannel::CLIENT_SIDE);//recommend calling new to dynamically allocate
+		channels.push_back(new_chan_ptr);//push into vector
+		//Push the new channel into the vector, want to use last channel in vector to send all our requests
 	}
+	FIFORequestChannel chan = *(channels.back());
 
 	//FUNCTIONALITY
 	if (!filename.empty()){
@@ -96,10 +99,10 @@ int main (int argc, char *argv[]) {
 		char* buf2 = new char[len];
 		memcpy(buf2, &fm, sizeof(filemsg));
 		strcpy(buf2 + sizeof(filemsg), fname.c_str());
-		active_chan->cwrite(buf2, len);  // I want the file length;
+		chan.cwrite(buf2, len);  // I want the file length;
 
 		int64_t filesize = 0;
-		active_chan->cread(&filesize, sizeof(int64_t)); //recieves the file length
+		chan.cread(&filesize, sizeof(int64_t)); //recieves the file length
 
 		char* buf3 =  new char[mval];//create buffer of size buff capacity(m)
 		ofstream fout("received/" + fname, ios::binary); //open and output to file
@@ -112,8 +115,8 @@ int main (int argc, char *argv[]) {
 			file_req->offset = offset; //set offset in the file, where are we starting from?
 			file_req->length = chunk_size; //set the length. Be careful of the last segment, # bytes to read
 			
-			active_chan->cwrite(buf2, len); //send the request (buf2)
-			active_chan->cread(buf3, file_req->length); //receive the response, cread into buf3 length file_req->len
+			chan.cwrite(buf2, len); //send the request (buf2)
+			chan.cread(buf3, file_req->length); //receive the response, cread into buf3 length file_req->len
 
 			fout.write(buf3, chunk_size); //write buf3 into file: received/filename
 			offset += chunk_size;
@@ -130,9 +133,9 @@ int main (int argc, char *argv[]) {
 		datamsg x(p, t, e); //change from hard coding to user's values
 		
 		memcpy(buf, &x, sizeof(datamsg));
-		active_chan->cwrite(buf, sizeof(datamsg)); // question
+		chan.cwrite(buf, sizeof(datamsg)); // question
 		double reply;
-		active_chan->cread(&reply, sizeof(double)); //answer
+		chan.cread(&reply, sizeof(double)); //answer
 		cout << "For person " << p << ", at time " << t << ", the value of ecg " << e << " is " << reply << endl;
 	}else if(p != -1){ // if p is specified, t and e not specified
 
@@ -143,10 +146,10 @@ int main (int argc, char *argv[]) {
 				datamsg msg(p, t, ecg);
 				char buf[MAX_MESSAGE];
 				memcpy(buf, &msg, sizeof(datamsg));
-				active_chan->cwrite(buf, sizeof(datamsg));//question
+				chan.cwrite(buf, sizeof(datamsg));//question
 
 				double reply;
-				active_chan->cread(&reply, sizeof(double)); //answer
+				chan.cread(&reply, sizeof(double)); //answer
 
 				//cout << "Requesting point " << i << " ECG" << ecg << endl;
 				if (ecg == 1) out << t << "," << reply << ",";
@@ -158,9 +161,10 @@ int main (int argc, char *argv[]) {
 
 	// closing the channel    
     MESSAGE_TYPE m = QUIT_MSG;
-	active_chan->cwrite(&m, sizeof(MESSAGE_TYPE));
-	if (extra_chan) delete extra_chan;
-    chan.cwrite(&m, sizeof(MESSAGE_TYPE));
+	channels[0]->cwrite(&m, sizeof(MESSAGE_TYPE));
+	for (size_t i = 1; i < channels.size(); ++i) {
+    delete channels[i];
+}
 
 	int status;
     wait(&status); //wait for child server to exit
