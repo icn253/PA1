@@ -83,7 +83,7 @@ int main (int argc, char *argv[]) {
 			double reply;
 			chan.cread(&reply, sizeof(double));
 
-			cout << "Requesting point " << i << " ECG" << ecg << endl;
+			//cout << "Requesting point " << i << " ECG" << ecg << endl;
 			out << reply;
 			if (ecg == 1) out << ",";
 			else out << "\n";
@@ -108,7 +108,7 @@ int main (int argc, char *argv[]) {
 
     // sending a non-sense message, you need to change this
 	filemsg fm(0, 0);
-	string fname = "teslkansdlkjflasjdf.dat";
+	string fname = filename;
 	
 	int len = sizeof(filemsg) + (fname.size() + 1);
 	char* buf2 = new char[len];
@@ -116,8 +116,42 @@ int main (int argc, char *argv[]) {
 	strcpy(buf2 + sizeof(filemsg), fname.c_str());
 	chan.cwrite(buf2, len);  // I want the file length;
 
+	__int64_t file_length;
+    chan.cread(&file_length, sizeof(__int64_t));
+    cout << "File length: " << file_length << " bytes" << endl;
+
 	delete[] buf2;
 	
+	 ofstream fout("received/" + filename, ios::binary);
+
+    // Step 3: Request the file in chunks
+    __int64_t offset = 0;
+    int buffer_size = MAX_MESSAGE - sizeof(filemsg); // max data per message
+
+    while (offset < file_length) {
+        int chunk_size = min(buffer_size, (int)(file_length - offset));
+        filemsg fm_chunk(offset, chunk_size);
+        int len = sizeof(filemsg) + filename.size() + 1;
+        char* buf_chunk = new char[len];
+        memcpy(buf_chunk, &fm_chunk, sizeof(filemsg));
+        strcpy(buf_chunk + sizeof(filemsg), filename.c_str());
+
+        chan.cwrite(buf_chunk, len);
+        delete[] buf_chunk;
+
+        // read the chunk from server
+        char* data = new char[chunk_size];
+        chan.cread(data, chunk_size);
+        fout.write(data, chunk_size);
+        delete[] data;
+
+        offset += chunk_size;
+    }
+
+    fout.close();
+    cout << "File received successfully: received/" << filename << endl;
+
+
 	// closing the channel    
      MESSAGE_TYPE m = QUIT_MSG;
     chan.cwrite(&m, sizeof(MESSAGE_TYPE));
