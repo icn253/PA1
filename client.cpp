@@ -20,14 +20,14 @@ using namespace std;
 
 int main (int argc, char *argv[]) {
 	int opt;
-	int p = 1;
-    double t = 0.0;
-    int e = 1;
-	int mval = 256;  // default value for -m
-	string filename = "";
+	int p = -1;
+    double t = -1;
+    int e = -1;
+	int mval = MAX_MESSAGE;  // default value for -m
     bool use_new_chan = false;
 
-	while ((opt = getopt(argc, argv, "p:t:e:f:m:")) != -1) {
+	string filename = "";
+	while ((opt = getopt(argc, argv, "p:t:e:f:m:c:")) != -1) {
 		switch (opt) {
 			case 'p':
 				p = atoi (optarg);
@@ -57,7 +57,7 @@ int main (int argc, char *argv[]) {
 	char m_str[16];
 	sprintf(m_str, "%d", mval);  // converts 256 -> "256"
 
-	char* server_args[] = {(char*) "./server", (char*) "-m", m_str, nullptr};
+	char* args[] = {(char*) "./server", (char*) "-m", m_str, nullptr};
 
 	pid_t pid = fork();
 	if (pid == -1){
@@ -65,11 +65,9 @@ int main (int argc, char *argv[]) {
 		return 1;
 	}
 	if (pid == 0){ //child process
-		execvp(server_args[0], server_args);
+		execvp(args[0], args);
 		cerr << "execvp failed\n";
 		return 0;
-	} else{
-		sleep(1);
 	}
 	//new channel
     FIFORequestChannel chan("control", FIFORequestChannel::CLIENT_SIDE);
@@ -86,53 +84,49 @@ int main (int argc, char *argv[]) {
 
 		extra_chan = new FIFORequestChannel (new_channel_name, FIFORequestChannel::CLIENT_SIDE);
 		active_chan = extra_chan;
-	}	
+	}
+
+	//FUNCTIONALITY
 	if (!filename.empty()){
 		// sending a non-sense message, you need to change this
 		filemsg fm(0, 0);
-		int len = sizeof(filemsg) + (filename.size() + 1);
+		string fname = filename;
+
+		int len = sizeof(filemsg) + (fname.size() + 1); //+1 for null terminator at end
 		char* buf2 = new char[len];
 		memcpy(buf2, &fm, sizeof(filemsg));
-		strcpy(buf2 + sizeof(filemsg), filename.c_str());
+		strcpy(buf2 + sizeof(filemsg), fname.c_str());
 		active_chan->cwrite(buf2, len);  // I want the file length;
 
-		__int64_t file_length;
-		active_chan->cread(&file_length, sizeof(__int64_t));
-		cout << "File length: " << file_length << " bytes" << endl;
-		delete[] buf2;
+		int64_t filesize = 0;
+		active_chan->cread(&filesize, sizeof(int64_t)); //recieves the file length
 
-		ofstream fout("received/" + filename, ios::binary);
+		char* buf3 =  new char[mval];//create buffer of size buff capacity(m)
+		ofstream fout("received/" + fname, ios::binary); //open and output to file
+		int64_t offset = 0;
+		//loop over the segments in the file filesize/buff capacity(m)
+		while (offset < filesize){
+			int chunk_size = min<int64_t>(mval, filesize - offset); //set chunk size, careful of the end
+			
+			filemsg* file_req = (filemsg*)buf2; //create filemsg instance
+			file_req->offset = offset; //set offset in the file, where are we starting from?
+			file_req->length = chunk_size; //set the length. Be careful of the last segment, # bytes to read
+			
+			active_chan->cwrite(buf2, len); //send the request (buf2)
+			active_chan->cread(buf3, file_req->length); //receive the response, cread into buf3 length file_req->len
 
-		// Step 3: Request the file in chunks
-		__int64_t offset = 0;
-		int buffer_size = mval - sizeof(filemsg); // max data per message
-
-		while (offset < file_length) {
-			int chunk_size = min(buffer_size, (int)(file_length - offset));
-			filemsg fm_chunk(offset, chunk_size);
-			int len = sizeof(filemsg) + filename.size() + 1;
-			char* buf_chunk = new char[len];
-			memcpy(buf_chunk, &fm_chunk, sizeof(filemsg));
-			strcpy(buf_chunk + sizeof(filemsg), filename.c_str());
-
-			active_chan->cwrite(buf_chunk, len);
-			delete[] buf_chunk;
-
-			// read the chunk from server
-			char* data = new char[chunk_size];
-			 active_chan->cread(data, chunk_size);
-			fout.write(data, chunk_size);
-			delete[] data;
-
+			fout.write(buf3, chunk_size); //write buf3 into file: received/filename
 			offset += chunk_size;
 		}
-		fout.close();
-		cout << "File received successfully: received/" << filename << endl;
 
-	}else if (t > 0.0){
+		cout << "File length: " << filesize << " bytes" << endl;
+		delete[] buf2;
+		delete[] buf3;
+
+	}else if (t != -1 && p != -1 && e != -1){ //if p, t, e are specified
 		//single point
 		// example data point request
-		char buf[mval]; // 256
+		char buf[MAX_MESSAGE]; // 256
 		datamsg x(p, t, e); //change from hard coding to user's values
 		
 		memcpy(buf, &x, sizeof(datamsg));
@@ -140,27 +134,25 @@ int main (int argc, char *argv[]) {
 		double reply;
 		active_chan->cread(&reply, sizeof(double)); //answer
 		cout << "For person " << p << ", at time " << t << ", the value of ecg " << e << " is " << reply << endl;
-	}else if(filename.size() && t == 0.0 && p > 0){
-		ofstream out("received/x1.csv");
+	}else if(p != -1){ // if p is specified, t and e not specified
 
-		for (int i = 0; i < 1000; ++i) {
+		ofstream out("received/x1.csv");
+		for (int i = 0; i < 1000; ++i) { //loop over first 1000 lines
 			t = i * 0.004;
 			for (int ecg = 1; ecg <= 2; ++ecg) {
 				datamsg msg(p, t, ecg);
-				char buf[mval];
+				char buf[MAX_MESSAGE];
 				memcpy(buf, &msg, sizeof(datamsg));
-				active_chan->cwrite(buf, sizeof(datamsg));
+				active_chan->cwrite(buf, sizeof(datamsg));//question
 
 				double reply;
-				active_chan->cread(&reply, sizeof(double));
+				active_chan->cread(&reply, sizeof(double)); //answer
 
 				//cout << "Requesting point " << i << " ECG" << ecg << endl;
-				out << reply;
-				if (ecg == 1) out << ",";
-				else out << "\n";
+				if (ecg == 1) out << t << "," << reply << ",";
+				else out << reply << "\n";
 			}
 		}
-
 		out.close();
 	}
 
